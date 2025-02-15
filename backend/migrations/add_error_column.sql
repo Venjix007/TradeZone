@@ -1,0 +1,5 @@
+-- Add error column to orders table
+ALTER TABLE orders 
+ADD COLUMN IF NOT EXISTS error TEXT,
+ADD COLUMN IF NOT EXISTS executed_price DECIMAL(10,2),
+ADD COLUMN IF NOT EXISTS executed_at TIMESTAMP WITH TIME ZONE;
