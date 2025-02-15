@@ -30,7 +30,7 @@ CORS(app, resources={r"/*": {"origins": ["https://stunning-puffpuff-97fd0f.netli
 # Add CORS headers to all responses
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://stunning-puffpuff-97fd0f.netlify.app/')
+    response.headers.add('Access-Control-Allow-Origin', 'https://stunning-puffpuff-97fd0f.netlify.app')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
