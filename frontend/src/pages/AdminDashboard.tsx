@@ -57,7 +57,7 @@ const AdminDashboard: React.FC = () => {
   const fetchMarketState = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/market/state', {
+      const response = await axios.get('https://tradezone-backend.onrender.com/api/market/state', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setMarketActive(response.data.is_active);
@@ -71,7 +71,7 @@ const AdminDashboard: React.FC = () => {
   const fetchLeaderboard = async () => {
     try {
       const token = localStorage.getItem('token');
-      const response = await axios.get('http://localhost:5000/api/leaderboard', {
+      const response = await axios.get('https://tradezone-backend.onrender.com/api/leaderboard', {
         headers: { Authorization: `Bearer ${token}` }
       });
       setLeaderboard(response.data);
@@ -88,7 +88,7 @@ const AdminDashboard: React.FC = () => {
       const newState = !marketActive;
       
       const response = await axios.post(
-        'http://localhost:5000/api/market/control',
+        'https://tradezone-backend.onrender.com/api/market/control',
         { is_active: newState },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -116,7 +116,7 @@ const AdminDashboard: React.FC = () => {
     try {
       const token = localStorage.getItem('token');
       const response = await axios.post(
-        'http://localhost:5000/api/admin/stocks/add',
+        'https://tradezone-backend.onrender.com/api/admin/stocks/add',
         {
           ...newStock,
           current_price: parseFloat(newStock.current_price)

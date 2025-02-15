@@ -48,7 +48,7 @@ const Market = () => {
 
   const fetchStocks = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/stocks');
+      const response = await axios.get('https://tradezone-backend.onrender.com/api/stocks');
       setStocks(response.data);
     } catch (error) {
       console.error('Error fetching stocks:', error);
@@ -66,7 +66,7 @@ const Market = () => {
 
   const fetchOrders = async (stockId: string, type: 'buy' | 'sell') => {
     try {
-      const response = await axios.get(`http://localhost:5000/api/orders?stock_id=${stockId}&type=${type}`);
+      const response = await axios.get(`https://tradezone-backend.onrender.com/api/orders?stock_id=${stockId}&type=${type}`);
       setOrders(response.data);
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -77,7 +77,7 @@ const Market = () => {
     if (!selectedStock) return;
 
     try {
-      await axios.post('http://localhost:5000/api/orders', {
+      await axios.post('https://tradezone-backend.onrender.com/api/orders', {
         stock_id: selectedStock.id,
         type: orderType,
         quantity: parseInt(quantity),

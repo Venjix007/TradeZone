@@ -31,7 +31,7 @@ const News = () => {
 
   const fetchNews = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/news');
+      const response = await axios.get('https://tradezone-backend.onrender.com/api/news');
       setNews(response.data);
     } catch (error) {
       console.error('Error fetching news:', error);
@@ -41,7 +41,7 @@ const News = () => {
   const handleSubmitNews = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:5000/api/news', {
+      await axios.post('https://tradezone-backend.onrender.com/api/news', {
         title,
         content,
       });

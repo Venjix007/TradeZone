@@ -39,8 +39,8 @@ const Portfolio = () => {
   const fetchPortfolio = async () => {
     try {
       const [holdingsResponse, profileResponse] = await Promise.all([
-        axios.get('http://localhost:5000/api/portfolio/holdings'),
-        axios.get('http://localhost:5000/api/portfolio/profile'),
+        axios.get('https://tradezone-backend.onrender.com/api/portfolio/holdings'),
+        axios.get('https://tradezone-backend.onrender.com/api/portfolio/profile'),
       ]);
 
       setHoldings(holdingsResponse.data);
