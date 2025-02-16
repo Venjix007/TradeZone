@@ -14,7 +14,7 @@ load_dotenv()
 
 app = Flask(__name__)
 # CORS(app)  # Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3001"]}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3000"]}}, supports_credentials=True)
 
 # Configure CORS with more detailed settings
 # CORS(app, resources={
