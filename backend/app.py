@@ -14,7 +14,7 @@ load_dotenv()
 
 app = Flask(__name__)
 # CORS(app)  # Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3000"]}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3001"]}}, supports_credentials=True)
 
 # Configure CORS with more detailed settings
 # CORS(app, resources={
@@ -559,25 +559,43 @@ def buy_stock(current_user):
         quantity = int(data.get('quantity', 0))
         
         if not stock_id or quantity <= 0:
-            return jsonify({'error': 'Invalid stock_id or quantity'}), 400
+            return jsonify({
+                'error': 'Invalid stock_id or quantity',
+                'showAlert': True,
+                'alertMessage': 'Please provide valid stock and quantity values.'
+            }), 400
             
         # Get stock details
         stock = supabase.table('stocks').select('*').eq('id', stock_id).execute()
         if not stock.data:
-            return jsonify({'error': 'Stock not found'}), 404
+            return jsonify({
+                'error': 'Stock not found',
+                'showAlert': True,
+                'alertMessage': 'The requested stock was not found.'
+            }), 404
             
         stock = stock.data[0]
-        total_cost = float(stock['current_price']) * quantity
+        # Convert price from USD to INR (using a fixed rate of 1 USD = 83 INR)
+        inr_price = float(stock['current_price']) * 83
+        total_cost = inr_price * quantity
         
         # Get user's balance
         user = supabase.table('profiles').select('balance').eq('user_id', current_user['user_id']).execute()
         if not user.data:
-            return jsonify({'error': 'User not found'}), 404
+            return jsonify({
+                'error': 'User not found',
+                'showAlert': True,
+                'alertMessage': 'User profile not found. Please try again.'
+            }), 404
             
         balance = float(user.data[0]['balance'])
         
         if balance < total_cost:
-            return jsonify({'error': 'Insufficient balance'}), 400
+            return jsonify({
+                'error': 'Insufficient balance',
+                'showAlert': True,
+                'alertMessage': f'Insufficient funds. Required: ₹{total_cost:.2f}, Available: ₹{balance:.2f}'
+            }), 400
             
         # Create buy order
         order = {
@@ -585,7 +603,7 @@ def buy_stock(current_user):
             'stock_id': stock_id,
             'type': 'buy',
             'quantity': quantity,
-            'price': stock['current_price'],
+            'price': str(inr_price),  # Store price in INR
             'status': ORDER_STATUS_PENDING,
             'created_at': datetime.now().isoformat()
         }
@@ -612,11 +630,17 @@ def buy_stock(current_user):
         
         return jsonify({
             'message': 'Stock purchased successfully',
-            'new_balance': new_balance
+            'new_balance': new_balance,
+            'showAlert': True,
+            'alertMessage': f'Successfully purchased {quantity} shares for ₹{total_cost:.2f}'
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'showAlert': True,
+            'alertMessage': f'Error occurred: {str(e)}'
+        }), 500
 
 @app.route('/api/stocks/sell', methods=['POST'])
 @token_required
@@ -627,21 +651,36 @@ def sell_stock(current_user):
         quantity = int(data.get('quantity', 0))
         
         if not stock_id or quantity <= 0:
-            return jsonify({'error': 'Invalid stock_id or quantity'}), 400
+            return jsonify({
+                'error': 'Invalid stock_id or quantity',
+                'showAlert': True,
+                'alertMessage': 'Please provide valid stock and quantity values.'
+            }), 400
             
         # Get stock details
         stock = supabase.table('stocks').select('*').eq('id', stock_id).execute()
         if not stock.data:
-            return jsonify({'error': 'Stock not found'}), 404
+            return jsonify({
+                'error': 'Stock not found',
+                'showAlert': True,
+                'alertMessage': 'The requested stock was not found.'
+            }), 404
             
         stock = stock.data[0]
-        total_value = float(stock['current_price']) * quantity
+        # Convert price from USD to INR (using a fixed rate of 1 USD = 83 INR)
+        inr_price = float(stock['current_price']) * 83
+        total_value = inr_price * quantity
         
         # Check if user has enough stocks
         holdings = supabase.table('user_stocks').select('*').eq('user_id', current_user['user_id']).eq('stock_id', stock_id).execute()
         
         if not holdings.data or holdings.data[0]['quantity'] < quantity:
-            return jsonify({'error': 'Insufficient stocks'}), 400
+            available_quantity = holdings.data[0]['quantity'] if holdings.data else 0
+            return jsonify({
+                'error': 'Insufficient stocks',
+                'showAlert': True,
+                'alertMessage': f'Not enough stocks available. Requested: {quantity}, Available: {available_quantity}'
+            }), 400
             
         # Get user's current balance
         user = supabase.table('profiles').select('balance').eq('user_id', current_user['user_id']).execute()
@@ -653,7 +692,7 @@ def sell_stock(current_user):
             'stock_id': stock_id,
             'type': 'sell',
             'quantity': quantity,
-            'price': stock['current_price'],
+            'price': str(inr_price),  # Store price in INR
             'status': ORDER_STATUS_PENDING,
             'created_at': datetime.now().isoformat()
         }
@@ -674,11 +713,17 @@ def sell_stock(current_user):
         
         return jsonify({
             'message': 'Stock sold successfully',
-            'new_balance': new_balance
+            'new_balance': new_balance,
+            'showAlert': True,
+            'alertMessage': f'Successfully sold {quantity} shares for ₹{total_value:.2f}'
         })
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'showAlert': True,
+            'alertMessage': f'Error occurred: {str(e)}'
+        }), 500
 
 # Orders Routes
 @app.route('/api/orders', methods=['POST'])
@@ -776,7 +821,8 @@ def get_user_profile(current_user):
             .execute()
 
         # Calculate total portfolio value
-        total_portfolio_value = float(profile.data['balance'])
+        total_portfolio_value = float(profile.data['balance'])  # Start with cash balance
+        
         for holding in holdings.data:
             stock_value = holding['quantity'] * float(holding['stocks']['current_price'])
             total_portfolio_value += stock_value
