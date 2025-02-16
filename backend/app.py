@@ -14,7 +14,7 @@ load_dotenv()
 
 app = Flask(__name__)
 # CORS(app)  # Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": ["https://stunning-puffpuff-97fd0f.netlify.app", "http://localhost:3000"]}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3000"]}}, supports_credentials=True)
 
 # Configure CORS with more detailed settings
 # CORS(app, resources={
@@ -30,7 +30,7 @@ CORS(app, resources={r"/*": {"origins": ["https://stunning-puffpuff-97fd0f.netli
 # Add CORS headers to all responses
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://stunning-puffpuff-97fd0f.netlify.app')
+    response.headers.add('Access-Control-Allow-Origin', 'https://benevolent-douhua-4258ca.netlify.app')
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
