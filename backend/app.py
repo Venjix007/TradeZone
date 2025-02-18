@@ -9,12 +9,11 @@ import jwt
 import random
 from threading import Thread
 import time
-
 load_dotenv()
 
 app = Flask(__name__)
 # CORS(app)  # Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3000"]}}, supports_credentials=True)
+CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3001",], "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"], "supports_credentials": True}})
 
 # Configure CORS with more detailed settings
 # CORS(app, resources={
@@ -30,7 +29,8 @@ CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netli
 # Add CORS headers to all responses
 @app.after_request
 def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', 'https://benevolent-douhua-4258ca.netlify.app')
+    if request.headers.get('Origin') in ['https://benevolent-douhua-4258ca.netlify.app', 'http://localhost:3001']:
+        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin'))
     response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     response.headers.add('Access-Control-Allow-Credentials', 'true')
@@ -575,8 +575,7 @@ def buy_stock(current_user):
             }), 404
             
         stock = stock.data[0]
-        # Convert price from USD to INR (using a fixed rate of 1 USD = 83 INR)
-        inr_price = float(stock['current_price']) * 83
+        inr_price = float(stock['current_price'])  # Price is already in INR
         total_cost = inr_price * quantity
         
         # Get user's balance
@@ -608,32 +607,58 @@ def buy_stock(current_user):
             'created_at': datetime.now().isoformat()
         }
         
-        # Update user's balance and stock holdings
-        new_balance = balance - total_cost
-        supabase.table('profiles').update({'balance': str(new_balance)}).eq('user_id', current_user['user_id']).execute()
-        
-        # Update or create user's stock holding
-        holdings = supabase.table('user_stocks').select('*').eq('user_id', current_user['user_id']).eq('stock_id', stock_id).execute()
-        
-        if holdings.data:
-            new_quantity = holdings.data[0]['quantity'] + quantity
-            supabase.table('user_stocks').update({'quantity': new_quantity}).eq('id', holdings.data[0]['id']).execute()
-        else:
-            supabase.table('user_stocks').insert({
-                'user_id': current_user['user_id'],
-                'stock_id': stock_id,
-                'quantity': quantity
-            }).execute()
+        try:
+            # Start transaction
+            # First record the transaction
+            transaction = supabase.table('transactions').insert(order).execute()
             
-        # Record the transaction
-        supabase.table('transactions').insert(order).execute()
-        
-        return jsonify({
-            'message': 'Stock purchased successfully',
-            'new_balance': new_balance,
-            'showAlert': True,
-            'alertMessage': f'Successfully purchased {quantity} shares for ₹{total_cost:.2f}'
-        })
+            if not transaction.data:
+                raise Exception("Failed to record transaction")
+                
+            # Then update the balance
+            balance_update = supabase.table('profiles').update({'balance': str(balance - total_cost)}).eq('user_id', current_user['user_id']).execute()
+            
+            if not balance_update.data:
+                raise Exception("Failed to update balance")
+            
+            # Finally update or create user's stock holding
+            holdings = supabase.table('user_stocks').select('*').eq('user_id', current_user['user_id']).eq('stock_id', stock_id).execute()
+            
+            if holdings.data:
+                new_quantity = holdings.data[0]['quantity'] + quantity
+                holding_update = supabase.table('user_stocks').update({
+                    'quantity': new_quantity,
+                    'updated_at': datetime.now().isoformat()
+                }).eq('id', holdings.data[0]['id']).execute()
+                
+                if not holding_update.data:
+                    raise Exception("Failed to update holdings")
+            else:
+                holding_insert = supabase.table('user_stocks').insert({
+                    'user_id': current_user['user_id'],
+                    'stock_id': stock_id,
+                    'quantity': quantity,
+                    'created_at': datetime.now().isoformat(),
+                    'updated_at': datetime.now().isoformat()
+                }).execute()
+                
+                if not holding_insert.data:
+                    raise Exception("Failed to create holdings")
+            
+            return jsonify({
+                'message': 'Stock purchased successfully',
+                'new_balance': balance - total_cost,
+                'showAlert': True,
+                'alertMessage': f'Successfully purchased {quantity} shares for ₹{total_cost:.2f}'
+            })
+            
+        except Exception as e:
+            # Rollback is handled automatically by Supabase
+            return jsonify({
+                'error': str(e),
+                'showAlert': True,
+                'alertMessage': f'Error occurred: {str(e)}'
+            }), 500
         
     except Exception as e:
         return jsonify({
@@ -667,8 +692,7 @@ def sell_stock(current_user):
             }), 404
             
         stock = stock.data[0]
-        # Convert price from USD to INR (using a fixed rate of 1 USD = 83 INR)
-        inr_price = float(stock['current_price']) * 83
+        inr_price = float(stock['current_price'])  # Price is already in INR
         total_value = inr_price * quantity
         
         # Check if user has enough stocks
@@ -692,31 +716,55 @@ def sell_stock(current_user):
             'stock_id': stock_id,
             'type': 'sell',
             'quantity': quantity,
-            'price': str(inr_price),  # Store price in INR
+            'price': str(inr_price),
             'status': ORDER_STATUS_PENDING,
             'created_at': datetime.now().isoformat()
         }
         
-        # Update user's balance and stock holdings
-        new_balance = current_balance + total_value
-        supabase.table('profiles').update({'balance': str(new_balance)}).eq('user_id', current_user['user_id']).execute()
-        
-        # Update holdings
-        new_quantity = holdings.data[0]['quantity'] - quantity
-        if new_quantity > 0:
-            supabase.table('user_stocks').update({'quantity': new_quantity}).eq('id', holdings.data[0]['id']).execute()
-        else:
-            supabase.table('user_stocks').delete().eq('id', holdings.data[0]['id']).execute()
+        try:
+            # Start transaction
+            # First record the transaction
+            transaction = supabase.table('transactions').insert(order).execute()
             
-        # Record the transaction
-        supabase.table('transactions').insert(order).execute()
-        
-        return jsonify({
-            'message': 'Stock sold successfully',
-            'new_balance': new_balance,
-            'showAlert': True,
-            'alertMessage': f'Successfully sold {quantity} shares for ₹{total_value:.2f}'
-        })
+            if not transaction.data:
+                raise Exception("Failed to record transaction")
+            
+            # Update user's balance
+            new_balance = current_balance + total_value
+            balance_update = supabase.table('profiles').update({'balance': str(new_balance)}).eq('user_id', current_user['user_id']).execute()
+            
+            if not balance_update.data:
+                raise Exception("Failed to update balance")
+            
+            # Update holdings
+            new_quantity = holdings.data[0]['quantity'] - quantity
+            if new_quantity > 0:
+                holding_update = supabase.table('user_stocks').update({
+                    'quantity': new_quantity,
+                    'updated_at': datetime.now().isoformat()
+                }).eq('id', holdings.data[0]['id']).execute()
+                
+                if not holding_update.data:
+                    raise Exception("Failed to update holdings")
+            else:
+                holding_delete = supabase.table('user_stocks').delete().eq('id', holdings.data[0]['id']).execute()
+                if not holding_delete.data:
+                    raise Exception("Failed to delete holdings")
+            
+            return jsonify({
+                'message': 'Stock sold successfully',
+                'new_balance': new_balance,
+                'showAlert': True,
+                'alertMessage': f'Successfully sold {quantity} shares for ₹{total_value:.2f}'
+            })
+            
+        except Exception as e:
+            # Rollback is handled automatically by Supabase
+            return jsonify({
+                'error': str(e),
+                'showAlert': True,
+                'alertMessage': f'Error occurred: {str(e)}'
+            }), 500
         
     except Exception as e:
         return jsonify({
@@ -1042,4 +1090,4 @@ def add_new_stock(current_user):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3000,debug=True)
+    app.run(host='0.0.0.0', port=3001,debug=True)
