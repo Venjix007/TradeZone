@@ -9,6 +9,8 @@ from threading import Thread
 import time
 import random
 import logging
+from functools import wraps
+import jwt
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -315,12 +317,11 @@ def process_pending_orders():
     """
     while True:
         try:
-            if not check_market_state():
-                # Cancel all pending orders if market is closed
-                pending_orders = supabase.table('orders').select('*').eq('status', ORDER_STATUS_PENDING).execute()
-                for order in pending_orders.data:
-                    update_order_status(order['id'], ORDER_STATUS_CANCELLED)
-                time.sleep(30)  # Wait longer when market is closed
+            # Check if market is active
+            market_state = get_market_state()
+            if not market_state or not market_state.get('is_active', False):
+                logger.info("Market is closed. Skipping order processing.")
+                time.sleep(5)
                 continue
 
             # Get all stocks to process orders stock by stock
