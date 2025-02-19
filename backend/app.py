@@ -3,7 +3,7 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, timedelta
 import threading
 from threading import Thread
 import time
@@ -19,29 +19,16 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = Flask(__name__)
-# CORS(app)  # Enable CORS for all routes
-CORS(app, resources={r"/*": {"origins": ["https://benevolent-douhua-4258ca.netlify.app", "http://localhost:3001",], "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"], "allow_headers": ["Content-Type", "Authorization"], "supports_credentials": True}})
 
-# Configure CORS with more detailed settings
-# CORS(app, resources={
-#     r"/*": {
-#         "origins": ["*"],
-#         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-#         "allow_headers": ["Content-Type", "Authorization", "Access-Control-Allow-Origin"],
-#         "supports_credentials": True,
-#         "expose_headers": ["Content-Range", "X-Content-Range"]
-#     }
-# })
-
-# Add CORS headers to all responses
-@app.after_request
-def after_request(response):
-    if request.headers.get('Origin') in ['https://benevolent-douhua-4258ca.netlify.app', 'http://localhost:3001']:
-        response.headers.add('Access-Control-Allow-Origin', request.headers.get('Origin'))
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    response.headers.add('Access-Control-Allow-Credentials', 'true')
-    return response
+# Enable CORS for all routes with proper configuration
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",  # Allow all origins in development
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": True
+    }
+})
 
 # Supabase Configuration
 supabase: Client = create_client(
@@ -292,7 +279,7 @@ def process_order(order_id, current_price):
         update_order_status(order_id, ORDER_STATUS_COMPLETED, executed_price=current_price)
         
         # Record the transaction
-        supabase.table('transactions').insert({
+        supabase.table('orders').insert({
             'user_id': order['user_id'],
             'stock_id': order['stock_id'],
             'type': order['type'],
@@ -396,11 +383,52 @@ def process_pending_orders():
             
         time.sleep(5)  # Small delay before next iteration
 
+def cancel_stale_orders():
+    """
+    Background thread function to cancel stale pending orders
+    """
+    while True:
+        try:
+            # Get orders that have been pending for more than 5 minutes
+            five_minutes_ago = (datetime.now() - timedelta(minutes=2)).isoformat()
+            
+            # Find stale pending orders
+            stale_orders = supabase.table('orders')\
+                .select('*')\
+                .eq('status', ORDER_STATUS_PENDING)\
+                .lt('created_at', five_minutes_ago)\
+                .execute()
+            
+            if stale_orders.data:
+                logger.info(f"Found {len(stale_orders.data)} stale orders to cancel")
+                for order in stale_orders.data:
+                    try:
+                        # Update order status to cancelled
+                        update_result = supabase.table('orders').update({
+                            'status': ORDER_STATUS_CANCELLED,
+                            'error': 'Order timed out after 5 minutes'
+                        }).eq('id', order['id']).execute()
+                        
+                        if update_result.data:
+                            logger.info(f"Successfully cancelled stale order {order['id']}")
+                        else:
+                            logger.error(f"Failed to cancel stale order {order['id']}")
+                    except Exception as e:
+                        logger.error(f"Error cancelling stale order {order['id']}: {str(e)}")
+            
+        except Exception as e:
+            logger.error(f"Error in cancel_stale_orders: {str(e)}")
+        
+        # Check every minute
+        time.sleep(60)
+
 # Start both price update and order processing threads
 price_update_thread = Thread(target=update_stock_prices, daemon=True)
 order_processing_thread = Thread(target=process_pending_orders, daemon=True)
+order_cancellation_thread = Thread(target=cancel_stale_orders, daemon=True)
 price_update_thread.start()
 order_processing_thread.start()
+order_cancellation_thread.start()
 
 # Auth Routes
 @app.route('/api/auth/register', methods=['POST'])
@@ -576,11 +604,12 @@ def buy_stock(current_user):
             stock = supabase.table('stocks').select('*').eq('id', stock_id).execute()
             logger.info(f"Stock details fetched: {stock.data}")
         except Exception as e:
-            logger.error(f"Failed to fetch stock details: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Failed to fetch stock details: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Failed to fetch stock details: {str(e)}'
+                'alertMessage': f'Failed to fetch stock details: {error_msg}'
             }), 500
             
         if not stock.data:
@@ -599,11 +628,12 @@ def buy_stock(current_user):
             user = supabase.table('profiles').select('balance').eq('user_id', current_user['user_id']).execute()
             logger.info(f"User balance fetched: {user.data}")
         except Exception as e:
-            logger.error(f"Failed to fetch user balance: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Failed to fetch user balance: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Failed to fetch user balance: {str(e)}'
+                'alertMessage': f'Failed to fetch user balance: {error_msg}'
             }), 500
             
         if not user.data:
@@ -639,43 +669,70 @@ def buy_stock(current_user):
         logger.info(f"Starting buy transaction for user {current_user['user_id']}, stock {stock_id}, quantity {quantity}")
         
         try:
-            # First record the transaction
-            transaction = supabase.table('transactions').insert(order).execute()
-            if not transaction.data:
-                raise Exception("Failed to record transaction: No data returned")
-            logger.info("Transaction recorded successfully")
+            # Create the order in the orders table
+            order_result = supabase.table('orders').insert(order).execute()
+            if not order_result.data:
+                error_msg = "Failed to create order: No data returned"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            logger.info("Order created successfully")
+            order_id = order_result.data[0]['id']
             
             # Then update the balance
             balance_update = supabase.table('profiles').update({'balance': str(new_balance)}).eq('user_id', current_user['user_id']).execute()
             if not balance_update.data:
-                raise Exception("Failed to update balance: No data returned")
+                error_msg = "Failed to update balance: No data returned"
+                logger.error(error_msg)
+                raise Exception(error_msg)
             logger.info("Balance updated successfully")
             
-            # Finally update or create user's stock holding
+            # Update holdings
             holdings = supabase.table('user_stocks').select('*').eq('user_id', current_user['user_id']).eq('stock_id', stock_id).execute()
             
             if holdings.data:
                 new_quantity = holdings.data[0]['quantity'] + quantity
-                holding_update = supabase.table('user_stocks').update({
-                    'quantity': new_quantity,
-                    'updated_at': datetime.now().isoformat()
-                }).eq('id', holdings.data[0]['id']).execute()
-                
-                if not holding_update.data:
-                    raise Exception("Failed to update holdings: No data returned")
-                logger.info("Holdings updated successfully")
+                try:
+                    holding_update = supabase.table('user_stocks').update({
+                        'quantity': new_quantity
+                    }).eq('id', holdings.data[0]['id']).execute()
+                    
+                    if not holding_update.data:
+                        error_msg = "Failed to update holdings: No data returned"
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    logger.info("Holdings updated successfully")
+                except Exception as e:
+                    error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+                    logger.error(f"Failed to update holdings: {error_msg}")
+                    raise Exception(f"Failed to update holdings: {error_msg}")
             else:
-                holding_insert = supabase.table('user_stocks').insert({
-                    'user_id': current_user['user_id'],
-                    'stock_id': stock_id,
-                    'quantity': quantity,
-                    'created_at': datetime.now().isoformat(),
-                    'updated_at': datetime.now().isoformat()
-                }).execute()
-                
-                if not holding_insert.data:
-                    raise Exception("Failed to create holdings: No data returned")
-                logger.info("New holdings created successfully")
+                try:
+                    holding_insert = supabase.table('user_stocks').insert({
+                        'user_id': current_user['user_id'],
+                        'stock_id': stock_id,
+                        'quantity': quantity
+                    }).execute()
+                    
+                    if not holding_insert.data:
+                        error_msg = "Failed to create holdings: No data returned"
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    logger.info("New holdings created successfully")
+                except Exception as e:
+                    error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+                    logger.error(f"Failed to create holdings: {error_msg}")
+                    raise Exception(f"Failed to create holdings: {error_msg}")
+            
+            # Update order status to completed
+            order_status_update = supabase.table('orders').update({
+                'status': ORDER_STATUS_COMPLETED,
+                'executed_at': datetime.now().isoformat()
+            }).eq('id', order_id).execute()
+            
+            if not order_status_update.data:
+                logger.error("Failed to update order status to completed")
+            else:
+                logger.info("Order status updated to completed")
             
             logger.info("Buy transaction completed successfully")
             return jsonify({
@@ -686,19 +743,21 @@ def buy_stock(current_user):
             })
             
         except Exception as e:
-            logger.error(f"Buy transaction failed: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Buy transaction failed: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Transaction failed: {str(e)}'
+                'alertMessage': f'Transaction failed: {error_msg}'
             }), 500
             
     except Exception as e:
-        logger.error(f"Unexpected error in buy_stock: {str(e)}")
+        error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+        logger.error(f"Unexpected error in buy_stock: {error_msg}")
         return jsonify({
-            'error': str(e),
+            'error': error_msg,
             'showAlert': True,
-            'alertMessage': f'An unexpected error occurred: {str(e)}'
+            'alertMessage': f'An unexpected error occurred: {error_msg}'
         }), 500
 
 @app.route('/api/stocks/sell', methods=['POST'])
@@ -721,11 +780,12 @@ def sell_stock(current_user):
             stock = supabase.table('stocks').select('*').eq('id', stock_id).execute()
             logger.info(f"Stock details fetched: {stock.data}")
         except Exception as e:
-            logger.error(f"Failed to fetch stock details: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Failed to fetch stock details: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Failed to fetch stock details: {str(e)}'
+                'alertMessage': f'Failed to fetch stock details: {error_msg}'
             }), 500
             
         if not stock.data:
@@ -744,11 +804,12 @@ def sell_stock(current_user):
             holdings = supabase.table('user_stocks').select('*').eq('user_id', current_user['user_id']).eq('stock_id', stock_id).execute()
             logger.info(f"User holdings fetched: {holdings.data}")
         except Exception as e:
-            logger.error(f"Failed to fetch user holdings: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Failed to fetch user holdings: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Failed to fetch user holdings: {str(e)}'
+                'alertMessage': f'Failed to fetch user holdings: {error_msg}'
             }), 500
         
         if not holdings.data or holdings.data[0]['quantity'] < quantity:
@@ -764,11 +825,12 @@ def sell_stock(current_user):
             user = supabase.table('profiles').select('balance').eq('user_id', current_user['user_id']).execute()
             logger.info(f"User balance fetched: {user.data}")
         except Exception as e:
-            logger.error(f"Failed to fetch user balance: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Failed to fetch user balance: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Failed to fetch user balance: {str(e)}'
+                'alertMessage': f'Failed to fetch user balance: {error_msg}'
             }), 500
             
         current_balance = float(user.data[0]['balance'])
@@ -790,37 +852,52 @@ def sell_stock(current_user):
         
         try:
             # First record the transaction
-            transaction = supabase.table('transactions').insert(order).execute()
+            transaction = supabase.table('orders').insert(order).execute()
             if not transaction.data:
-                raise Exception("Failed to record transaction: No data returned")
+                error_msg = "Failed to record transaction: No data returned"
+                logger.error(error_msg)
+                raise Exception(error_msg)
             logger.info("Transaction recorded successfully")
             
             # Update user's balance
             balance_update = supabase.table('profiles').update({'balance': str(new_balance)}).eq('user_id', current_user['user_id']).execute()
             if not balance_update.data:
-                raise Exception("Failed to update balance: No data returned")
+                error_msg = "Failed to update balance: No data returned"
+                logger.error(error_msg)
+                raise Exception(error_msg)
             logger.info("Balance updated successfully")
             
             # Update holdings
             new_quantity = holdings.data[0]['quantity'] - quantity
-            try:
-                if new_quantity > 0:
-                    holding_update = supabase.table('user_stocks').update({
-                        'quantity': new_quantity,
-                        'updated_at': datetime.now().isoformat()
-                    }).eq('id', holdings.data[0]['id']).execute()
-                    
-                    if not holding_update.data:
-                        raise Exception("Failed to update holdings: No data returned")
-                    logger.info("Holdings updated successfully")
-                else:
-                    holding_delete = supabase.table('user_stocks').delete().eq('id', holdings.data[0]['id']).execute()
-                    if holding_delete is None or not holding_delete.data:
-                        raise Exception("Failed to delete holdings: No data returned")
-                    logger.info("Holdings deleted successfully")
-            except Exception as e:
-                logger.error(f"Failed to update/delete holdings: {str(e)}")
-                raise Exception(f"Failed to update/delete holdings: {str(e)}")
+            if new_quantity > 0:
+                holding_update = supabase.table('user_stocks').update({
+                    'quantity': new_quantity
+                }).eq('id', holdings.data[0]['id']).execute()
+                
+                if not holding_update.data:
+                    error_msg = "Failed to update holdings"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                logger.info("Holdings updated successfully")
+            else:
+                # Delete the holding if quantity is 0
+                holding_delete = supabase.table('user_stocks').delete().eq('id', holdings.data[0]['id']).execute()
+                if not holding_delete.data:
+                    error_msg = "Failed to delete holdings"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                logger.info("Holdings deleted successfully")
+            
+            # Update order status to completed
+            order_status_update = supabase.table('orders').update({
+                'status': ORDER_STATUS_COMPLETED,
+                'executed_at': datetime.now().isoformat()
+            }).eq('id', transaction.data[0]['id']).execute()
+            
+            if not order_status_update.data:
+                logger.error("Failed to update order status to completed")
+            else:
+                logger.info("Order status updated to completed")
             
             logger.info("Sell transaction completed successfully")
             return jsonify({
@@ -831,19 +908,21 @@ def sell_stock(current_user):
             })
             
         except Exception as e:
-            logger.error(f"Sell transaction failed: {str(e)}")
+            error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+            logger.error(f"Sell transaction failed: {error_msg}")
             return jsonify({
-                'error': str(e),
+                'error': error_msg,
                 'showAlert': True,
-                'alertMessage': f'Transaction failed: {str(e)}'
+                'alertMessage': f'Transaction failed: {error_msg}'
             }), 500
             
     except Exception as e:
-        logger.error(f"Unexpected error in sell_stock: {str(e)}")
+        error_msg = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
+        logger.error(f"Unexpected error in sell_stock: {error_msg}")
         return jsonify({
-            'error': str(e),
+            'error': error_msg,
             'showAlert': True,
-            'alertMessage': f'An unexpected error occurred: {str(e)}'
+            'alertMessage': f'An unexpected error occurred: {error_msg}'
         }), 500
 
 @app.route('/api/orders', methods=['POST'])
@@ -1162,4 +1241,4 @@ def add_new_stock(current_user):
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=3001,debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
