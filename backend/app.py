@@ -135,9 +135,9 @@ def calculate_price_change(stock_id):
         
         # Calculate price change percentage (max ±5%)
         if ratio > 1:  # More demand than supply
-            change = min((ratio - 1) * 2, 0.05)  # Positive change
+            change = min((ratio - 1) * 5, 0.05)  # Positive change
         else:  # More supply than demand
-            change = max((ratio - 1) * 2, -0.05)  # Negative change
+            change = max((ratio - 1) * 5, -0.05)  # Negative change
             
         return change
         
@@ -147,65 +147,117 @@ def calculate_price_change(stock_id):
 
 def update_stock_prices():
     """
-    Background thread function to update stock prices based on market demand and supply
+    Background thread function to update stock prices based on trading activity
     """
-    while price_update_running:
+    while True:
         try:
-            # Get all stocks
-            stocks = supabase.table('stocks').select('*').execute()
-            
-            for stock in stocks.data:
-                # Calculate price change based on market conditions
-                change_percentage = calculate_price_change(stock['id'])
+            with app.app_context():  # Add Flask app context
+                # Get all stocks
+                stocks = supabase.table('stocks').select('*').execute()
                 
-                if change_percentage != 0:  # Only update if there's a change
-                    current_price = float(stock['current_price'])
-                    new_price = round(current_price * (1 + change_percentage), 2)
+                for stock in stocks.data:
+                    try:
+                        # Get recent completed orders for this stock (last 2 minutes)
+                        two_minutes_ago = (datetime.now() - timedelta(minutes=2)).isoformat()
+                        recent_orders = supabase.table('orders')\
+                            .select('*')\
+                            .eq('stock_id', stock['id'])\
+                            .eq('status', ORDER_STATUS_COMPLETED)\
+                            .gt('executed_at', two_minutes_ago)\
+                            .execute()
+                        
+                        if recent_orders.data:
+                            # Calculate price change based on buy/sell pressure
+                            total_buy_quantity = sum(order['quantity'] for order in recent_orders.data if order['type'] == 'buy')
+                            total_sell_quantity = sum(order['quantity'] for order in recent_orders.data if order['type'] == 'sell')
+                            
+                            # Calculate net pressure (-1 to 1 range)
+                            total_volume = total_buy_quantity + total_sell_quantity
+                            if total_volume > 0:
+                                pressure = (total_buy_quantity - total_sell_quantity) / total_volume
+                            else:
+                                pressure = 0
+                            
+                            # Calculate price change (up to 2% per update)
+                            max_change_percent = 0.02  # 2% maximum change
+                            change_percent = pressure * max_change_percent
+                            
+                            # Apply change to current price
+                            current_price = float(stock['current_price'])
+                            price_change = current_price * change_percent
+                            new_price = current_price + price_change
+                            
+                            # Set default min_price if not present
+                            min_price = 0.01  # Minimum 1 cent
+                            if 'min_price' in stock and stock['min_price']:
+                                try:
+                                    min_price = max(0.01, float(stock['min_price']))
+                                except (TypeError, ValueError):
+                                    pass
+                            
+                            # Set default max_price if not present
+                            max_price = float('inf')
+                            if 'max_price' in stock and stock['max_price']:
+                                try:
+                                    max_price = float(stock['max_price'])
+                                except (TypeError, ValueError):
+                                    pass
+                            
+                            # Ensure price stays within bounds
+                            new_price = max(min_price, min(max_price, new_price))
+                            
+                            # Update stock price
+                            update_result = supabase.table('stocks').update({
+                                'current_price': str(round(new_price, 2))
+                            }).eq('id', stock['id']).execute()
+                            
+                            if update_result.data:
+                                logger.info(f"Updated price for {stock['symbol']} to {new_price:.2f} (pressure: {pressure:.2%})")
+                            else:
+                                logger.error(f"Failed to update price for {stock['symbol']}")
+                        else:
+                            # If no recent trades, add small random movement (-0.5% to +0.5%)
+                            current_price = float(stock['current_price'])
+                            random_change = current_price * (random.uniform(-0.005, 0.005))
+                            new_price = current_price + random_change
+                            
+                            # Set default min_price if not present
+                            min_price = 0.01  # Minimum 1 cent
+                            if 'min_price' in stock and stock['min_price']:
+                                try:
+                                    min_price = max(0.01, float(stock['min_price']))
+                                except (TypeError, ValueError):
+                                    pass
+                            
+                            # Set default max_price if not present
+                            max_price = float('inf')
+                            if 'max_price' in stock and stock['max_price']:
+                                try:
+                                    max_price = float(stock['max_price'])
+                                except (TypeError, ValueError):
+                                    pass
+                            
+                            # Ensure price stays within bounds
+                            new_price = max(min_price, min(max_price, new_price))
+                            
+                            update_result = supabase.table('stocks').update({
+                                'current_price': str(round(new_price, 2))
+                            }).eq('id', stock['id']).execute()
+                            
+                            if update_result.data:
+                                logger.info(f"Updated price for {stock['symbol']} to {new_price:.2f} (random movement)")
+                            else:
+                                logger.error(f"Failed to update price for {stock['symbol']}")
+                                
+                    except Exception as e:
+                        logger.error(f"Error updating price for stock {stock['symbol']}: {str(e)}")
+                        continue
                     
-                    # Ensure price doesn't go below 1
-                    new_price = max(1.0, new_price)
-                    
-                    # Update stock price in database
-                    supabase.table('stocks').update({
-                        'current_price': str(new_price),
-                        'price_change': str(round(change_percentage * 100, 2))
-                    }).eq('id', stock['id']).execute()
-                
         except Exception as e:
-            print(f"Error updating stock prices: {str(e)}")
-            
-        # Wait for 30 seconds before next update
-        time.sleep(30)
-
-def update_order_status(order_id, status, error=None, executed_price=None, executed_at=None):
-    """
-    Helper function to update order status and related fields
-    """
-    try:
-        # Ensure status matches the database constraint
-        valid_statuses = [ORDER_STATUS_PENDING, ORDER_STATUS_COMPLETED, ORDER_STATUS_CANCELLED]
-        if status not in valid_statuses:
-            print(f"Invalid status: {status}, valid statuses are: {valid_statuses}")
-            status = ORDER_STATUS_CANCELLED
+            logger.error(f"Error in update_stock_prices: {str(e)}")
         
-        # Start with basic update data
-        update_data = {'status': status}
-        
-        # Add optional fields only if they are provided
-        if executed_price is not None:
-            update_data['price'] = str(executed_price)  # Use 'price' instead of 'executed_price'
-        
-        # Execute the update
-        print(f"Updating order {order_id} with data: {update_data}")  # Debug log
-        result = supabase.table('orders').update(update_data).eq('id', order_id).execute()
-        
-        if result.data:
-            print(f"Successfully updated order {order_id} to status: {status}")
-        else:
-            print(f"Failed to update order {order_id}")
-            
-    except Exception as e:
-        print(f"Error updating order status: {str(e)}")
+        # Update every 2 minutes
+        time.sleep(120)
 
 def process_order(order_id, current_price):
     """
