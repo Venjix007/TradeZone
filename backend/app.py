@@ -1,11 +1,10 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import threading
-from threading import Thread
 import time
 import random
 import logging
@@ -20,10 +19,10 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Enable CORS for all routes with proper configuration
+# Enable CORS with explicit support for credentials and proper headers
 CORS(app, resources={
-    r"/*": {
-        "origins": "https://trade-zone-five.vercel.app",  # Allow all origins in development
+    r"/api/*": {
+        "origins": "https://trade-zone-five.vercel.app",  # Your frontend domain
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -38,6 +37,16 @@ supabase: Client = create_client(
 
 # JWT Configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
+
+
+# Apply CORS headers manually for OPTIONS requests if needed
+@app.after_request
+def apply_cors(response):
+    response.headers["Access-Control-Allow-Origin"] = "https://trade-zone-five.vercel.app"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    return response
 
 def token_required(f):
     @wraps(f)
