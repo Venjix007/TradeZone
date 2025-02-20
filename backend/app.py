@@ -23,7 +23,7 @@ app = Flask(__name__)
 # Enable CORS for all routes with proper configuration
 CORS(app, resources={
     r"/*": {
-        "origins": " https://trade-zone-five.vercel.app",  # Allow all origins in development
+        "origins": "https://trade-zone-five.vercel.app",  # Allow all origins in development
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
