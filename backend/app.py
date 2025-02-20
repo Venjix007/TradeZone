@@ -157,8 +157,8 @@ def update_stock_prices():
                 
                 for stock in stocks.data:
                     try:
-                        # Get recent completed orders for this stock (last 2 minutes)
-                        two_minutes_ago = (datetime.now() - timedelta(minutes=2)).isoformat()
+                        # Get recent completed orders for this stock (last 30 seconds)
+                        two_minutes_ago = (datetime.now() - timedelta(seconds=30)).isoformat()
                         recent_orders = supabase.table('orders')\
                             .select('*')\
                             .eq('stock_id', stock['id'])\
@@ -206,9 +206,11 @@ def update_stock_prices():
                             # Ensure price stays within bounds
                             new_price = max(min_price, min(max_price, new_price))
                             
-                            # Update stock price
+                            # Update stock price and price change
+                            price_change_percent = ((new_price - current_price) / current_price) * 100
                             update_result = supabase.table('stocks').update({
-                                'current_price': str(round(new_price, 2))
+                                'current_price': str(round(new_price, 2)),
+                                'price_change': round(price_change_percent, 2)
                             }).eq('id', stock['id']).execute()
                             
                             if update_result.data:
@@ -240,8 +242,11 @@ def update_stock_prices():
                             # Ensure price stays within bounds
                             new_price = max(min_price, min(max_price, new_price))
                             
+                            # Update stock price and price change
+                            price_change_percent = ((new_price - current_price) / current_price) * 100
                             update_result = supabase.table('stocks').update({
-                                'current_price': str(round(new_price, 2))
+                                'current_price': str(round(new_price, 2)),
+                                'price_change': round(price_change_percent, 2)
                             }).eq('id', stock['id']).execute()
                             
                             if update_result.data:
@@ -256,8 +261,8 @@ def update_stock_prices():
         except Exception as e:
             logger.error(f"Error in update_stock_prices: {str(e)}")
         
-        # Update every 2 minutes
-        time.sleep(120)
+        # Update every 30 seconds
+        time.sleep(30)
 
 def process_order(order_id, current_price):
     """
