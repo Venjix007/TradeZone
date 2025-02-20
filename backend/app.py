@@ -38,6 +38,14 @@ supabase: Client = create_client(
 # JWT Configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 
+@app.route('/api/auth/login', methods=['OPTIONS'])
+def handle_options():
+    response = make_response()
+    response.headers.add("Access-Control-Allow-Origin", "https://trade-zone-five.vercel.app")
+    response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    response.headers.add("Access-Control-Allow-Credentials", "true")
+    return response, 200
 
 # Handle OPTIONS globally
 @app.before_request
