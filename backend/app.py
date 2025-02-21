@@ -1,10 +1,11 @@
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import threading
+from threading import Thread
 import time
 import random
 import logging
@@ -19,10 +20,10 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Enable CORS with credentials
+# Enable CORS for all routes with proper configuration
 CORS(app, resources={
-    r"/api/*": {
-        "origins": "*",
+    r"/*": {
+        "origins": "*",  # Allow all origins in development
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -38,71 +39,33 @@ supabase: Client = create_client(
 # JWT Configuration
 JWT_SECRET = os.getenv('JWT_SECRET', 'your-secret-key')
 
-# @app.route('/api/auth/login', methods=['OPTIONS'])
-# def handle_options():
-#     response = make_response()
-#     response.headers.add("Access-Control-Allow-Origin", "https://trade-zone-five.vercel.app")
-#     response.headers.add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-#     response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
-#     response.headers.add("Access-Control-Allow-Credentials", "true")
-#     return response, 200
-
-# Handle OPTIONS globally
-# @app.before_request
-# def handle_options():
-#     if request.method == 'OPTIONS':
-#         response = make_response()
-#         response.headers["Access-Control-Allow-Origin"] = "https://trade-zone-five.vercel.app"
-#         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-#         response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-#         response.headers["Access-Control-Allow-Credentials"] = "true"
-#         return response, 200
-
-@app.before_request
-def handle_options():
-    if request.method == 'OPTIONS':
-        response = make_response()
-        response.headers["Access-Control-Allow-Origin"] = "https://stunning-tapioca-493d9b.netlify.app"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response  # Remove the status code here
-
-# Apply CORS headers after each response
-@app.after_request
-def apply_cors(response):
-    response.headers["Access-Control-Allow-Origin"] = "https://stunning-tapioca-493d9b.netlify.app"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    return response
-
-
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = None
         if 'Authorization' in request.headers:
             token = request.headers['Authorization'].split(' ')[1]
-
+        
         if not token:
             return jsonify({'error': 'Token is missing'}), 401
-
+            
         try:
             data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            # Get user from database
             user = supabase.table('profiles').select('*').eq('user_id', data['user_id']).single().execute()
-
+            
             if not user.data:
                 return jsonify({'error': 'User not found'}), 401
-
+                
+            # Add is_admin flag to user data
             current_user = user.data
             current_user['user_id'] = data['user_id']
             current_user['is_admin'] = user.data.get('is_admin', False)
-
+            
             return f(current_user, *args, **kwargs)
         except Exception as e:
             return jsonify({'error': str(e)}), 401
-
+            
     return decorated
 
 # Admin verification decorator
@@ -1334,5 +1297,5 @@ def add_new_stock(current_user):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-# if __name__ == '__main__':
-#     app.run(host='0.0.0.0', port=5000, debug=True)
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
