@@ -11,5 +11,5 @@
 [build.environment]
   NODE_VERSION = "18"
   NPM_VERSION = "9"
-  REACT_APP_API_URL = "https://tradezone-backend.onrender.com"
+  REACT_APP_API_URL = "https://trade-zone-five.vercel.app"
 
