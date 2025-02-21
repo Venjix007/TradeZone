@@ -158,7 +158,7 @@ def update_stock_prices():
                 for stock in stocks.data:
                     try:
                         # Get recent completed orders for this stock (last 30 seconds)
-                        two_minutes_ago = (datetime.now() - timedelta(seconds=30)).isoformat()
+                        two_minutes_ago = (datetime.now() - timedelta(minutes=2)).isoformat()
                         recent_orders = supabase.table('orders')\
                             .select('*')\
                             .eq('stock_id', stock['id'])\
@@ -262,7 +262,7 @@ def update_stock_prices():
             logger.error(f"Error in update_stock_prices: {str(e)}")
         
         # Update every 30 seconds
-        time.sleep(30)
+        time.sleep(120)
 
 def process_order(order_id, current_price):
     """
