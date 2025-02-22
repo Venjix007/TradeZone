@@ -261,8 +261,8 @@ def update_stock_prices():
         except Exception as e:
             logger.error(f"Error in update_stock_prices: {str(e)}")
         
-        # Update every 30 seconds
-        time.sleep(120)
+        # Update every 240 seconds
+        time.sleep(240)
 
 def process_order(order_id, current_price):
     """
