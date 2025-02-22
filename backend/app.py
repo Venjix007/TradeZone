@@ -982,6 +982,55 @@ def sell_stock(current_user):
             'alertMessage': f'An unexpected error occurred: {error_msg}'
         }), 500
 
+# @app.route('/api/orders', methods=['POST'])
+# @token_required
+# def place_order(current_user):
+#     try:
+#         # Check if market is active
+#         if not check_market_state():
+#             return jsonify({'error': 'Market is currently closed. Orders cannot be placed.'}), 403
+
+#         data = request.get_json()
+#         if not data:
+#             return jsonify({'error': 'No data provided'}), 400
+            
+#         required_fields = ['stock_id', 'type', 'quantity']
+#         if not all(field in data for field in required_fields):
+#             return jsonify({'error': 'Missing required fields'}), 400
+            
+#         # Validate order type
+#         if data['type'] not in ['buy', 'sell']:
+#             return jsonify({'error': 'Invalid order type'}), 400
+            
+#         # Get current stock price
+#         stock = supabase.table('stocks').select('current_price').eq('id', data['stock_id']).single().execute()
+#         if not stock.data:
+#             return jsonify({'error': 'Stock not found'}), 404
+            
+#         current_price = stock.data['current_price']
+            
+#         # Create order
+#         order = {
+#             'user_id': current_user['user_id'],
+#             'stock_id': data['stock_id'],
+#             'type': data['type'],
+#             'quantity': data['quantity'],
+#             'price': current_price,  # Add current price
+#             'status': ORDER_STATUS_PENDING,
+#             'created_at': datetime.now().isoformat()
+#         }
+        
+#         result = supabase.table('orders').insert(order).execute()
+        
+#         return jsonify({
+#             'message': 'Order placed successfully',
+#             'order_id': result.data[0]['id']
+#         })
+        
+#     except Exception as e:
+#         print(f"Error placing order: {str(e)}")  # Add error logging
+#         return jsonify({'error': str(e)}), 500
+
 @app.route('/api/orders', methods=['POST'])
 @token_required
 def place_order(current_user):
@@ -989,6 +1038,25 @@ def place_order(current_user):
         # Check if market is active
         if not check_market_state():
             return jsonify({'error': 'Market is currently closed. Orders cannot be placed.'}), 403
+
+        # Check if user has placed an order in the last minute
+        try:
+            one_minute_ago = datetime.now() - timedelta(minutes=1)
+            recent_orders = supabase.table('orders') \
+                .select('*', count='exact') \
+                .eq('user_id', current_user['user_id']) \
+                .gt('created_at', one_minute_ago.isoformat()) \
+                .execute()
+
+            if recent_orders.count > 0:
+                return jsonify({
+                    'error': 'Order limit exceeded',
+                    'showAlert': True,
+                    'alertMessage': 'You can only place one order per minute. Please wait.'
+                }), 429
+        except Exception as e:
+            logger.error(f"Error checking recent orders: {str(e)}")
+            return jsonify({'error': 'Failed to validate order limit'}), 500
 
         data = request.get_json()
         if not data:
@@ -1015,7 +1083,7 @@ def place_order(current_user):
             'stock_id': data['stock_id'],
             'type': data['type'],
             'quantity': data['quantity'],
-            'price': current_price,  # Add current price
+            'price': current_price,
             'status': ORDER_STATUS_PENDING,
             'created_at': datetime.now().isoformat()
         }
@@ -1024,12 +1092,18 @@ def place_order(current_user):
         
         return jsonify({
             'message': 'Order placed successfully',
-            'order_id': result.data[0]['id']
+            'order_id': result.data[0]['id'],
+            'showAlert': True,
+            'alertMessage': 'Order placed successfully. Processing may take a few minutes.'
         })
         
     except Exception as e:
-        print(f"Error placing order: {str(e)}")  # Add error logging
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error placing order: {str(e)}")
+        return jsonify({
+            'error': str(e),
+            'showAlert': True,
+            'alertMessage': 'Failed to place order. Please try again.'
+        }), 500
 
 @app.route('/api/orders', methods=['GET'])
 @token_required
