@@ -2,6 +2,9 @@
 
 A full-stack virtual stock market platform with role-based authentication, real-time trading, and market control features.
 
+#Link
+https://glittery-semolina-0227d6.netlify.app/
+
 ## Features
 
 - Role-based authentication (Admin and Regular Users)
